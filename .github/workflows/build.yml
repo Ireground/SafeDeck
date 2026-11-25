@@ -1,0 +1,48 @@
+name: Build VST3
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --target SafeDeck_VST3 SafeDeckTests --parallel
+
+      # Null test, NaN/inf, blasts, ceiling and true-peak checks at 44.1-192 kHz
+      - name: Engine tests
+        run: build/Release/SafeDeckTests.exe
+
+      - name: Upload VST3
+        uses: actions/upload-artifact@v4
+        with:
+          name: SafeDeck-VST3-Windows
+          path: build/SafeDeck_artefacts/Release/VST3/SafeDeck.vst3
+
+      # Crash test: pluginval loads the plugin like a DAW would and stress-tests it.
+      - name: Download pluginval
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pluginval
+
+      - name: Run pluginval (strictness 10)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pluginval-log | Out-Null
+          .\pluginval\pluginval.exe --strictness-level 10 --validate-in-process --timeout-ms 600000 --output-dir pluginval-log "build/SafeDeck_artefacts/Release/VST3/SafeDeck.vst3"
+          if ($LASTEXITCODE -ne 0) { Write-Error "pluginval found a problem - see the pluginval-log artifact"; exit 1 }
+
+      - name: Upload pluginval log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginval-log
+          path: pluginval-log
